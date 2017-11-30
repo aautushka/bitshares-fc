@@ -35,6 +35,8 @@ namespace fc {
     class public_key
     {
         public:
+           using bytes = std::vector<char>;
+
            public_key();
            public_key(const public_key& k);
            ~public_key();
@@ -77,6 +79,7 @@ namespace fc {
            static public_key from_base58( const std::string& b58 );
 
            unsigned int fingerprint() const;
+           bytes encrypt(const bytes& input) const;
 
         private:
           friend class private_key;
@@ -92,6 +95,8 @@ namespace fc {
     class private_key
     {
         public:
+           using bytes = std::vector<char>;
+
            private_key();
            private_key( private_key&& pk );
            private_key( const private_key& pk );
@@ -142,6 +147,7 @@ namespace fc {
            }
 
            unsigned int fingerprint() const { return get_public_key().fingerprint(); }
+           bytes decrypt(const bytes& input) const;
 
         private:
            private_key( EC_KEY* k );

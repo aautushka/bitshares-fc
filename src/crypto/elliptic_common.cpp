@@ -4,6 +4,9 @@
 #include <fc/crypto/hmac.hpp>
 #include <fc/crypto/openssl.hpp>
 #include <fc/crypto/ripemd160.hpp>
+#include <fc/crypto/aes.hpp>
+
+#include <iostream>
 
 #ifdef _WIN32
 # include <malloc.h>
@@ -386,7 +389,80 @@ namespace fc { namespace ecc {
                                      detail::_right(hash) );
         return result;
     }
-}
+
+    template <class T>
+    static void append(std::vector<char>& where, const T& what)
+    {
+        where.insert(where.end(), what.begin(), what.end());
+    }
+
+    static void append(std::vector<char>& where, char* what, size_t size)
+    {
+        where.insert(where.end(), what, what + size);
+    }
+
+    public_key::bytes public_key::encrypt(const bytes& message) const
+    {
+        auto ephem_privkey = private_key::generate();
+        auto ephem_pubkey = ephem_privkey.get_public_key().serialize();
+        auto shared_secret = ephem_privkey.get_shared_secret(*this);
+
+        // iv's length is 16 bytes, 32 is the offset where it starts
+        // that's how aes_encrypt is implemented
+        // technically we could provide any random data for that
+        // i guess that's not the most secure way using non random iv 
+        auto iv = bytes(shared_secret.data() + 32, shared_secret.data() + 48);
+        auto cipher = aes_encrypt(shared_secret, message);
+
+        auto ret = iv;
+        append(ret, ephem_pubkey);
+        append(ret, cipher);
+
+        return ret;
+    }
+
+    static public_key deserialize_public_key(const char* ptr)
+    {
+        public_key_data d;
+        memcpy(d.data, ptr, d.size());
+        return {d};
+    }
+
+    static std::vector<char> do_decrypt(
+            const fc::sha512& key, const char* cipher, size_t cipher_size, const char * iv)
+    {
+        std::vector<char> plain_text(cipher_size);
+
+        auto plain_len = aes_decrypt(
+                (unsigned char*)cipher, (int)cipher_size,
+                (unsigned char*)&key, (unsigned char*)iv,
+                (unsigned char*)plain_text.data() );
+
+        plain_text.resize(plain_len);
+        return plain_text;
+    }
+
+    private_key::bytes private_key::decrypt(const bytes& message) const
+    {
+        constexpr auto iv_size = 16;
+        constexpr auto ephem_key_size = 33;
+        constexpr auto min_message_size = iv_size + ephem_key_size;
+
+        if (message.size() <= min_message_size)
+        {
+            return {};
+        }
+
+        const auto cipher_size = message.size() - min_message_size;
+        const auto iv = &message[0];
+        const auto ephem_key = iv + iv_size;
+        const auto cipher = ephem_key + ephem_key_size;
+
+        auto shared_secret = get_shared_secret(deserialize_public_key(ephem_key));
+        return do_decrypt(shared_secret, cipher, cipher_size, iv);
+    }
+
+} // namespace ecc
 
 void to_variant( const ecc::private_key& var,  variant& vo )
 {
@@ -411,5 +487,4 @@ void from_variant( const variant& var,  ecc::public_key& vo )
     from_variant( var, dat );
     vo = ecc::public_key(dat);
 }
-
-}
+} // namespace fc
